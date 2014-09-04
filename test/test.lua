@@ -7,7 +7,7 @@ print("require(iuplua): ",require("iuplua"))
 lt = require("LuaTerminal")
 
 -- Create terminal
-newterm = lt.new(_ENV)
+newterm = lt.new(_ENV,true)
 print("newterm: ", newterm)
 ltbox = iup.vbox{newterm}
 

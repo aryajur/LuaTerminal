@@ -1,5 +1,5 @@
 ----------------------------------------------
--- Lua Termina Module
+-- Lua Terminal Module
 -- Supports multiple terminals with independent command histories
 -- @module LuaTerminal
 -- @dependencies iup
@@ -9,6 +9,9 @@ local iup = iup
 
 local type = type
 local tonumber = tonumber
+local tostring = tostring
+local load = load
+local pcall = pcall
 
 -- For debugging
 local print = print
@@ -16,14 +19,14 @@ local print = print
 -- Create the module table here
 local M = {}
 package.loaded[...] = M
-if setfenv then
-	setfenv(1,M)	-- Lua 5.1
-else
-	_ENV = M		-- Lua 5.2
-end
+_ENV = M		-- Lua 5.2
+
 -- Create the module table ends
 
 _VERSION = "1.2014.09.03"
+MAXTEXT = 8192		-- maximum characters in text box
+
+local numOfTerms = 0	-- To maintain the number of terminals being managed
 
 -- Check some iup things to see if it is really loaded
 if type(iup) ~= "table" or not iup.GetGlobal or type(iup.GetGlobal) ~= "function" or not iup.text or type(iup.text) ~= "function" then
@@ -32,27 +35,91 @@ end
 
 -- Function called when terminal is mapped
 local function map_cb(term)
-	if term.data.text == "" then
+	if term.data.prompt[1] == 0 and term.data.prompt[2] == 0 then
 		-- Display the prompt
 		term.append = ">"
 		term.data.prompt = {1,1}
 	end
 end
 
--- Callback when backspace pressed
-local function k_any(term,c)
-	if c==iup.K_BS then
-		print("Backspace pressed", term.caret,c)
-		local caret = term.caret
-		if tonumber(caret:match("(.-),.+")) == term.data.prompt[1] and tonumber(caret:match(".-,(.+)")) == term.data.prompt[2] + 1 then
+local incomplete = function (str)
+	local f, err = load(str)
+	return f == nil and (err:find(" expected .*near <eof>$") or err:find(" unexpected symbol near <eof>$") or err:find(" syntax error near <eof>$"))
+end
+
+local function action(term,c,newVal)
+	local caret = term.caret
+	local selection = term.selection
+--	print("action generated")
+--	print("caret: ",caret)
+--	print("selection: ", selection)
+	-- Ignore any editing done before the current prompt
+	if tonumber(caret:match("^(.-),.+")) < term.data.prompt[1] then
+		return iup.IGNORE
+	end
+	if tonumber(caret:match("^(.-),.+")) == term.data.prompt[1] and tonumber(caret:match("^.-,(.+)")) <= term.data.prompt[2] then
+		return iup.IGNORE
+	end
+	if selection then
+		if tonumber(selection:match("^(.-),.+")) < term.data.prompt[1] then
 			return iup.IGNORE
 		end
+		if tonumber(selection:match("^(.-),.+")) == term.data.prompt[1] and tonumber(selection:match("^.-,(.-):.+")) <= term.data.prompt[2] then
+			return iup.IGNORE
+		end
+	end
+	return iup.DEFAULT
+end
+
+-- Callback when backspace pressed
+local function k_any(term,c)
+	local caret = term.caret
+	-- ignore Backspace pressed just after the current prompt
+	if c==iup.K_BS then
+		if tonumber(caret:match("^(.-),.+")) < term.data.prompt[1] then
+			return iup.IGNORE
+		end
+		if tonumber(caret:match("^(.-),.+")) == term.data.prompt[1] and tonumber(caret:match("^.-,(.+)")) <= term.data.prompt[2] + 1 then
+			return iup.IGNORE
+		end
+		return iup.DEFAULT
+	elseif c==iup.K_CR then
+		-- Execute the current text
+		local promptPos = iup.TextConvertLinColToPos(term, term.data.prompt[1], term.data.prompt[2])
+		local cmd = term.value:sub(promptPos+2,-1)
+		print("new text is: ",cmd)
+		-- Check if command is incomplete
+		if incomplete(cmd) then
+			term.append = "\n\t"
+		else
+			-- Execute the command here
+			term.append = "\n"
+			local f,err = load(cmd,"=stdin","bt",term.data.env)
+			local stat
+			if not f then
+				term.append = err.."\n"
+			else
+				stat,err = pcall(f)
+				if not stat then
+					term.append = err.."\n"
+				end
+			end
+
+			term.append = ">"
+			-- Update the prompt position
+			term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
+			print("prompt: ",term.data.prompt[1],term.data.prompt[2])
+		end
+		return iup.IGNORE
 	else
 		return iup.DEFAULT
 	end
 end
 
-function new(env)
+-- env is the environment associated with the terminal where the lua commands will be executed
+-- logFile is the name if the logFile where the terminal output is backed up till the last executed command
+-- redirectIO is a boolean, if true then print function and io.read and io.write will be redirected to use the text control
+function new(env,redirectIO, logFile)
 	if not env then
 		env = {}
 	end
@@ -66,13 +133,43 @@ function new(env)
 	}
 	term.map_cb = map_cb
 	term.k_any = k_any
+	term.action = action
+	if redirectIO then
+		-- Modify the print statement
+		if env.print then
+			env.print = function(...)
+				local t = {...}
+				for i = 1,#t do
+					if i > 1 then
+						term.append = "\t"
+					end
+					term.append = tostring(t[i])
+				end
+				term.append = "\n"
+			end
+		end
+		-- modify io.write and io.read
+		if env.io and type(env.io) == "table" then
+			-- modify io.write
+			env.io.write = function(...)
+				local t = {...}
+				for i = 1,#t do
+					term.append = tostring(t[i])
+				end
+			end
+		end
+
+	end
 	term.data = {
 		history = {},	-- To store the command history
-		text = "",
 		env = env,		-- The environment where the scripts are executed
-		formatting = {},		-- To store all formatting applied to the 
+		formats = {},		-- To store all formatting applied to the 
+		logFile = logFile, 	-- Where all the terminal text is written to
+		maxText = MAXTEXT,	-- Maximum number of characters in the text box
 		prompt = {0,0}		-- current position of the prompt to prevent it from being deleted
 	}
+	
+	numOfTerms = numOfTerms + 1
 	
 	return term
 end
