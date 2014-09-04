@@ -11,10 +11,10 @@ local type = type
 local tonumber = tonumber
 local tostring = tostring
 local load = load
-local pcall = pcall
+local coroutine = coroutine
 
 -- For debugging
-local print = print
+--local print = print
 
 -- Create the module table here
 local M = {}
@@ -23,7 +23,7 @@ _ENV = M		-- Lua 5.2
 
 -- Create the module table ends
 
-_VERSION = "1.2014.09.03"
+_VERSION = "1.2014.09.04"
 MAXTEXT = 8192		-- maximum characters in text box
 
 local numOfTerms = 0	-- To maintain the number of terminals being managed
@@ -84,32 +84,49 @@ local function k_any(term,c)
 		end
 		return iup.DEFAULT
 	elseif c==iup.K_CR then
+		local stat,err, redirectIO
 		-- Execute the current text
 		local promptPos = iup.TextConvertLinColToPos(term, term.data.prompt[1], term.data.prompt[2])
 		local cmd = term.value:sub(promptPos+2,-1)
-		print("new text is: ",cmd)
-		-- Check if command is incomplete
-		if incomplete(cmd) then
-			term.append = "\n\t"
-		else
-			-- Execute the command here
-			term.append = "\n"
-			local f,err = load(cmd,"=stdin","bt",term.data.env)
-			local stat
-			if not f then
-				term.append = err.."\n"
+		--print("new text is: ",cmd)
+		-- Check if cmd goes to already executing script or its a new chunk
+		if not term.data.co then
+			-- Check if command is incomplete
+			if incomplete(cmd) then
+				term.append = "\n\t"
+				return iup.IGNORE
 			else
-				stat,err = pcall(f)
-				if not stat then
-					term.append = err.."\n"
+				-- Execute the command here
+				term.append = "\n"
+				local f
+				f,err = load(cmd,"=stdin","bt",term.data.env)
+				if not f then
+					term.append = err.."\n>"
+					-- Update the prompt position
+					term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
+					return iup.IGNORE
+				else
+					term.data.co = coroutine.create(f)
+					stat,err = coroutine.resume(term.data.co)
 				end
 			end
-
-			term.append = ">"
-			-- Update the prompt position
-			term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
-			print("prompt: ",term.data.prompt[1],term.data.prompt[2])
+		else
+			term.append = "\n"
+			stat,err = coroutine.resume(term.data.co,cmd)
 		end
+		if not stat then
+			term.append = err.."\n"
+		elseif err == "UI" then
+			-- Code needs user input through io.read so the input till the next enter goes to this coroutine
+			redirectIO = true
+		end
+		if not redirectIO then
+			term.data.co = nil	-- destroy the coroutine
+			term.append = ">"
+		end
+		-- Update the prompt position
+		term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
+		--print("prompt: ",term.data.prompt[1],term.data.prompt[2])
 		return iup.IGNORE
 	else
 		return iup.DEFAULT
@@ -156,6 +173,11 @@ function new(env,redirectIO, logFile)
 				for i = 1,#t do
 					term.append = tostring(t[i])
 				end
+			end
+			-- modify io.read
+			env.io.read = function()
+				local inp = coroutine.yield("UI")	-- To indicate it needs to read user input
+				return inp
 			end
 		end
 
