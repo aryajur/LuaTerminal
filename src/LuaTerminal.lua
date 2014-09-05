@@ -12,6 +12,7 @@ local tonumber = tonumber
 local tostring = tostring
 local load = load
 local coroutine = coroutine
+local io = io
 
 -- For debugging
 --local print = print
@@ -23,7 +24,7 @@ _ENV = M		-- Lua 5.2
 
 -- Create the module table ends
 
-_VERSION = "1.2014.09.04"
+_VERSION = "1.2014.09.05"
 MAXTEXT = 8192		-- maximum characters in text box
 
 local numOfTerms = 0	-- To maintain the number of terminals being managed
@@ -86,6 +87,27 @@ local function trimText(term)
 	end
 end
 
+-- see if the file exists
+function file_exists(file)
+  local f = io.open(file, "rb")
+  if f then f:close() end
+  return f ~= nil
+end
+
+local function addLog(term,text)
+	if term.data.logFile then
+		local f
+		-- If file exists then append information
+		if file_exists(term.data.logFile) then
+			f = io.open(term.data.logFile,"a")
+		else
+			f = io.open(term.data.logFile,"w")
+		end
+		f:write(text)
+		f:close()
+	end
+end
+
 -- Callback when backspace pressed
 local function k_any(term,c)
 	local caret = term.caret
@@ -123,6 +145,7 @@ local function k_any(term,c)
 						term.data.history[#term.data.history + 1] = cmd
 						term.data.history[0] = #term.data.history+1
 					end
+					addLog(term,term.value:sub(promptPos+2,-1))
 					trimText(term)
 					-- Update the prompt position
 					term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
@@ -151,6 +174,7 @@ local function k_any(term,c)
 				term.data.history[0] = #term.data.history+1
 			end
 		end
+		addLog(term,term.value:sub(promptPos+2,-1))
 		trimText(term)
 		-- Update the prompt position
 		term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)

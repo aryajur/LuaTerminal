@@ -7,7 +7,7 @@ require("iuplua")
 lt = require("LuaTerminal")
 
 -- Create terminal
-newterm = lt.new(_ENV,true)
+newterm = lt.new(_ENV,true,"testlog.txt")
 --print("newterm: ", newterm)
 ltbox = iup.vbox{newterm}
 
