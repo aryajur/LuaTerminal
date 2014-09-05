@@ -71,6 +71,21 @@ local function action(term,c,newVal)
 	return iup.DEFAULT
 end
 
+-- Function to trim the text in the beginning of the terminal
+local function trimText(term)
+	--print(#term.value,term.data.maxText,term.value)
+	if #term.value > term.data.maxText then
+		--print(term.value:sub(-term.data.maxText,-1))
+		-- Trim it justified with a line feed
+		if term.value:sub(-term.data.maxText-1,-term.data.maxText-1) == "\n" then
+			term.value = term.value:sub(-term.data.maxText,-1)
+		else
+			term.value = term.value:sub(-term.data.maxText,-1):match(".-\n(.+)$")
+		end
+		term.caretpos = #term.value
+	end
+end
+
 -- Callback when backspace pressed
 local function k_any(term,c)
 	local caret = term.caret
@@ -94,6 +109,7 @@ local function k_any(term,c)
 			-- Check if command is incomplete
 			if incomplete(cmd) then
 				term.append = "\n\t"
+				trimText(term)
 				return iup.IGNORE
 			else
 				-- Execute the command here
@@ -102,6 +118,12 @@ local function k_any(term,c)
 				f,err = load(cmd,"=stdin","bt",term.data.env)
 				if not f then
 					term.append = err.."\n>"
+					-- Add cmd to command history
+					if cmd ~= term.data.history[#term.data.history] then
+						term.data.history[#term.data.history + 1] = cmd
+						term.data.history[0] = #term.data.history+1
+					end
+					trimText(term)
 					-- Update the prompt position
 					term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
 					return iup.IGNORE
@@ -123,10 +145,64 @@ local function k_any(term,c)
 		if not redirectIO then
 			term.data.co = nil	-- destroy the coroutine
 			term.append = ">"
+			-- Add cmd to command history
+			if cmd ~= term.data.history[#term.data.history] then
+				term.data.history[#term.data.history + 1] = cmd
+				term.data.history[0] = #term.data.history+1
+			end
 		end
+		trimText(term)
 		-- Update the prompt position
 		term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
 		--print("prompt: ",term.data.prompt[1],term.data.prompt[2])
+		return iup.IGNORE
+	elseif c==iup.K_cUP then		-- up arrow pressed
+		-- Go to the previous command in the history if cntrl is pressed
+		if term.data.history[0] > 0 then
+			term.data.history[0] = term.data.history[0] - 1
+			if term.data.history[0] < 1 then
+				term.data.history[0] = 1
+			end
+			local promptPos = iup.TextConvertLinColToPos(term, term.data.prompt[1], term.data.prompt[2])
+			local cmd = term.data.history[term.data.history[0]]
+			term.value = term.value:sub(1,promptPos+1)..cmd
+			term.caretpos = #term.value
+		end
+		return iup.IGNORE
+	elseif c==iup.K_cLEFT then	-- left arrow pressed
+		-- Go to the first command in the history if cntrl is pressed
+		if term.data.history[0] > 0 then
+			term.data.history[0] = 1
+			local promptPos = iup.TextConvertLinColToPos(term, term.data.prompt[1], term.data.prompt[2])
+			local cmd = term.data.history[term.data.history[0]]
+			term.value = term.value:sub(1,promptPos+1)..cmd
+			term.caretpos = #term.value
+		end
+		return iup.IGNORE
+	elseif c==iup.K_cRIGHT then	-- right arrow pressed
+		-- Go to the last command in the history if cntrl is pressed
+		if term.data.history[0] > 0 then
+			term.data.history[0] = #term.data.history
+			local promptPos = iup.TextConvertLinColToPos(term, term.data.prompt[1], term.data.prompt[2])
+			local cmd = term.data.history[term.data.history[0]]
+			term.value = term.value:sub(1,promptPos+1)..cmd
+			term.caretpos = #term.value
+		end
+		return iup.IGNORE	
+	elseif c==iup.K_cDOWN then	-- down arrow pressed
+		-- Go to the next command in the history if cntrl is pressed
+		if term.data.history[0] < #term.data.history+1 then
+			term.data.history[0] = term.data.history[0] + 1
+			local promptPos = iup.TextConvertLinColToPos(term, term.data.prompt[1], term.data.prompt[2])
+			local cmd
+			if term.data.history[0] > #term.data.history then
+				cmd = ""
+			else
+				cmd = term.data.history[term.data.history[0]]
+			end
+			term.value = term.value:sub(1,promptPos+1)..cmd
+			term.caretpos = #term.value
+		end
 		return iup.IGNORE
 	else
 		return iup.DEFAULT
@@ -183,7 +259,7 @@ function new(env,redirectIO, logFile)
 
 	end
 	term.data = {
-		history = {},	-- To store the command history
+		history = {[0] = 0},	-- To store the command history, index 0 contains the command pointer
 		env = env,		-- The environment where the scripts are executed
 		formats = {},		-- To store all formatting applied to the 
 		logFile = logFile, 	-- Where all the terminal text is written to
