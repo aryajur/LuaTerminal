@@ -88,7 +88,7 @@ local function trimText(term)
 end
 
 -- see if the file exists
-function file_exists(file)
+local function file_exists(file)
   local f = io.open(file, "rb")
   if f then f:close() end
   return f ~= nil
