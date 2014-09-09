@@ -2,7 +2,8 @@
 -- Lua Terminal Module
 -- Supports multiple terminals with independent command histories
 -- @module LuaTerminal
--- @dependencies iup
+-- @dependency iup
+-- @dependency luasocket if terminal over socket is created
 -- @date 9/3/2014
 
 local iup = iup
@@ -28,6 +29,8 @@ _VERSION = "1.2014.09.05"
 MAXTEXT = 8192		-- maximum characters in text box
 
 local numOfTerms = 0	-- To maintain the number of terminals being managed
+local numOfSockTerms = 0	-- To maintain the number of socket terminals being managed
+local socket
 
 -- Check some iup things to see if it is really loaded
 if type(iup) ~= "table" or not iup.GetGlobal or type(iup.GetGlobal) ~= "function" or not iup.text or type(iup.text) ~= "function" then
@@ -72,7 +75,7 @@ local function action(term,c,newVal)
 	return iup.DEFAULT
 end
 
--- Function to trim the text in the beginning of the terminal
+-- Function to trim the text in the beginning of the terminal to keep the terminal content within the MAXLENGTH
 local function trimText(term)
 	--print(#term.value,term.data.maxText,term.value)
 	if #term.value > term.data.maxText then
@@ -94,14 +97,14 @@ local function file_exists(file)
   return f ~= nil
 end
 
-local function addLog(term,text)
-	if term.data.logFile then
+local function addLog(logFile,text)
+	if logFile then
 		local f
 		-- If file exists then append information
-		if file_exists(term.data.logFile) then
-			f = io.open(term.data.logFile,"a")
+		if file_exists(logFile) then
+			f = io.open(logFile,"a")
 		else
-			f = io.open(term.data.logFile,"w")
+			f = io.open(logFile,"w")
 		end
 		f:write(text)
 		f:close()
@@ -145,7 +148,7 @@ local function k_any(term,c)
 						term.data.history[#term.data.history + 1] = cmd
 						term.data.history[0] = #term.data.history+1
 					end
-					addLog(term,term.value:sub(promptPos+2,-1))
+					addLog(term.data.logFile,term.value:sub(promptPos+2,-1))
 					trimText(term)
 					-- Update the prompt position
 					term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
@@ -174,7 +177,7 @@ local function k_any(term,c)
 				term.data.history[0] = #term.data.history+1
 			end
 		end
-		addLog(term,term.value:sub(promptPos+2,-1))
+		addLog(term.data.logFile,term.value:sub(promptPos+2,-1))
 		trimText(term)
 		-- Update the prompt position
 		term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
@@ -236,7 +239,7 @@ end
 -- env is the environment associated with the terminal where the lua commands will be executed
 -- logFile is the name if the logFile where the terminal output is backed up till the last executed command
 -- redirectIO is a boolean, if true then print function and io.read and io.write will be redirected to use the text control
-function new(env,redirectIO, logFile)
+local function newterm(env,redirectIO, logFile)
 	if not env then
 		env = {}
 	end
@@ -296,3 +299,128 @@ function new(env,redirectIO, logFile)
 	return term
 end
 
+-- To create a terminal on a socket to allow remote connection by other applications
+-- env is the environment associated with the terminal where the lua commands will be executed
+-- logFile is the name if the logFile where the terminal output is backed up till the last executed command
+-- redirectIO is a boolean, if true then print function and io.read and io.write will be redirected to use the text control
+local function newSocketTerm(env,redirectIO,logFile)
+	socket = require("socket")
+	-- Setup timer to run housekeeping
+	local timer = iup.timer{time = 10, run = "YES"}	-- run timer with every 10ms action
+	local s,msg = socket.bind("*", 0)
+	if not s then
+		return nil,msg
+	end
+	s:settimeout(0.001)	-- Time out of 1 millisecond
+	local ip,port = s:getsockname()
+	local c,sockTerm, cmd
+	
+	sockTerm = {
+		history = {[0] = 0},	-- To store the command history, index 0 contains the command pointer
+		env = env,		-- The environment where the scripts are executed
+		logFile = logFile 	-- Where all the terminal text is written to
+	}
+
+	if redirectIO then
+		-- Modify the print statement
+		if env.print then
+			env.print = function(...)
+				local t = {...}
+				local str = ""
+				for i = 1,#t do
+					if i > 1 then
+						str = str.."\t"
+					end
+					str = str..tostring(t[i])
+				end
+				str = str.."\n"
+				c:send(str)
+			end
+		end
+		-- modify io.write and io.read
+		if env.io and type(env.io) == "table" then
+			-- modify io.write
+			env.io.write = function(...)
+				local t = {...}
+				str = ""
+				for i = 1,#t do
+					str = str..tostring(t[i])
+				end
+				c:send(str)
+			end
+			-- modify io.read
+			env.io.read = function()
+				local inp = coroutine.yield("UI")	-- To indicate it needs to read user input
+				return inp
+			end
+		end
+
+	end
+	cmd = ""
+	function timer:action_cb()
+		local line,err, stat,redirectIO
+		timer.run = "NO"	-- Stop the timer
+		if not c then
+			-- Broadcast ip and port to anyone listening
+			-- ##################################################
+			c,msg = s:accept()
+		end
+		if c then
+			line,err = c:receive()	-- Receive a line from the connected client
+			msg = ""	-- Response message back to socket
+			if line then
+				cmd = cmd..line
+				if not sockTerm.co then	-- check if a coroutine is already in process
+					-- Check if command is incomplete
+					if incomplete(cmd) then
+						cmd = cmd.."\n\t"
+						timer.run = "YES"	-- Restart the timer
+						return
+					else
+						-- Execute the command here
+						local f
+						f,err = load(cmd,"=stdin","bt",sockTerm.env)
+						if not f then
+							msg = err.."\n"
+							-- Add cmd to command history
+							if cmd ~= sockTerm.history[#sockTerm.history] then
+								sockTerm.history[#sockTerm.history + 1] = cmd
+								sockTerm.history[0] = #sockTerm.history+1
+							end
+							addLog(sockTerm.logFile,cmd.."\n"..msg)
+							cmd = ""	-- refresh the command
+							timer.run = "YES"	-- Restart the timer
+							return
+						else
+							sockTerm.co = coroutine.create(f)
+							stat,err = coroutine.resume(sockTerm.co)
+						end
+					end
+				else
+					-- Coroutine was already in process. Pass the received data into it.
+					stat,err = coroutine.resume(sockTerm.co,cmd)
+				end
+				if not stat then
+					msg = msg..err.."\n"
+					c:send(msg)
+				elseif err == "UI" then
+					-- Code needs user input through io.read so the input till the next enter goes to this coroutine
+					redirectIO = true
+				end
+				if not redirectIO then
+					sockTerm.co = nil	-- destroy the coroutine
+					-- Add cmd to command history
+					if cmd ~= sockTerm.history[#sockTerm.history] then
+						sockTerm.history[#sockTerm.history + 1] = cmd
+						sockTerm.history[0] = #sockTerm.history+1
+					end
+				end
+				addLog(sockTerm.logFile,cmd.."\n"..msg)
+				cmd = ""
+			end		-- if line then ends
+		end		-- if c then ends
+		timer.run = "YES"	-- Restart the timer
+	end		-- function timer:action_cb() ends
+	numOfSockTerms = numOfSockTerms + 1
+	return sockTerm
+end
