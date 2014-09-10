@@ -416,7 +416,38 @@ function newSocketTerm(env,redirectIO,logFile)
 				if line:sub(1,#SPMSG) == SPMSG then
 					-- This is a special command
 					line = line:sub(#SPMSG+1,-1)
-					
+					if line:sub(1,2) == "UP" then
+						-- Return the previous command
+						if sockTerm.history[0] > 0 then
+							sockTerm.history[0] = sockTerm.history[0] - 1
+							if sockTerm.history[0] < 1 then
+								sockTerm.history[0] = 1
+							end
+							c:send(sockTerm.history[sockTerm.history[0]].."\n")
+						end
+					elseif line:sub(1,4) == "DOWN" then
+						-- return the next command
+						if sockTerm.history[0] < #sockTerm.history+1 then
+							sockTerm.history[0] = sockTerm.history[0] + 1
+							if sockTerm.history[0] > #sockTerm.history then
+								c:send("\n")
+							else
+								c:send(sockTerm.history[sockTerm.history[0]].."\n")
+							end
+						end
+					elseif line:sub(1,4) == "LEFT" then
+						-- return the 1st command
+						if sockTerm.history[0] > 0 then
+							sockTerm.history[0] = 1
+							c:send(sockTerm.history[sockTerm.history[0]].."\n")
+						end
+					elseif line:sub(1,5) == "RIGHT" then
+						-- Return the last command
+						if sockTerm.history[0] > 0 then
+							sockTerm.history[0] = #sockTerm.history
+							c:send(sockTerm.history[sockTerm.history[0]].."\n")
+						end
+					end
 				else
 					cmd = cmd..line
 					if not sockTerm.co then	-- check if a coroutine is already in process
