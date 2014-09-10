@@ -14,9 +14,10 @@ local tostring = tostring
 local load = load
 local coroutine = coroutine
 local io = io
+local require = require
 
 -- For debugging
---local print = print
+local print = print
 
 -- Create the module table here
 local M = {}
@@ -25,12 +26,13 @@ _ENV = M		-- Lua 5.2
 
 -- Create the module table ends
 
-_VERSION = "1.2014.09.05"
+_VERSION = "1.2014.09.09"
 MAXTEXT = 8192		-- maximum characters in text box
 
 local numOfTerms = 0	-- To maintain the number of terminals being managed
 local numOfSockTerms = 0	-- To maintain the number of socket terminals being managed
 local socket
+local sockCR = "@#"
 
 -- Check some iup things to see if it is really loaded
 if type(iup) ~= "table" or not iup.GetGlobal or type(iup.GetGlobal) ~= "function" or not iup.text or type(iup.text) ~= "function" then
@@ -239,7 +241,7 @@ end
 -- env is the environment associated with the terminal where the lua commands will be executed
 -- logFile is the name if the logFile where the terminal output is backed up till the last executed command
 -- redirectIO is a boolean, if true then print function and io.read and io.write will be redirected to use the text control
-local function newterm(env,redirectIO, logFile)
+function newTerm(env,redirectIO, logFile)
 	if not env then
 		env = {}
 	end
@@ -303,21 +305,25 @@ end
 -- env is the environment associated with the terminal where the lua commands will be executed
 -- logFile is the name if the logFile where the terminal output is backed up till the last executed command
 -- redirectIO is a boolean, if true then print function and io.read and io.write will be redirected to use the text control
-local function newSocketTerm(env,redirectIO,logFile)
+function newSocketTerm(env,redirectIO,logFile)
 	socket = require("socket")
 	-- Setup timer to run housekeeping
-	local timer = iup.timer{time = 10, run = "YES"}	-- run timer with every 10ms action
+	local timer = iup.timer{time = 10, run = "NO"}	-- run timer with every 10ms action
 	local s,msg = socket.bind("*", 0)
 	if not s then
 		return nil,msg
 	end
 	s:settimeout(0.001)	-- Time out of 1 millisecond
 	local ip,port = s:getsockname()
-	local c,sockTerm, cmd
+	local c,sockTerm, cmd, SPMSG
+	
+	SPMSG = "LUATERMINAL@"..tostring(port).."@"..tostring(M)
+	sockCR = SPMSG
 	
 	sockTerm = {
 		history = {[0] = 0},	-- To store the command history, index 0 contains the command pointer
 		env = env,		-- The environment where the scripts are executed
+		timer = timer,
 		logFile = logFile 	-- Where all the terminal text is written to
 	}
 
@@ -333,8 +339,8 @@ local function newSocketTerm(env,redirectIO,logFile)
 					end
 					str = str..tostring(t[i])
 				end
-				str = str.."\n"
-				c:send(str)
+				c:send(str..sockCR.."\n")
+				addLog(sockTerm.logFile,str.."\n")
 			end
 		end
 		-- modify io.write and io.read
@@ -346,7 +352,8 @@ local function newSocketTerm(env,redirectIO,logFile)
 				for i = 1,#t do
 					str = str..tostring(t[i])
 				end
-				c:send(str)
+				c:send(str.."\n")
+				addLog(sockTerm.logFile,str)
 			end
 			-- modify io.read
 			env.io.read = function()
@@ -356,71 +363,134 @@ local function newSocketTerm(env,redirectIO,logFile)
 		end
 
 	end
+	-- Function to return a function that multicasts/broadcasts the ip and port
+	local function broadcastIPFunc()
+		--create udp instance for broadcasting.multicasting
+		local send = socket.udp()
+		--set timeout so it won't block UI
+		send:settimeout(0)
+		
+		return function()
+			--message we will send
+			local msg = SPMSG		-- Send a unique identifier
+
+			--first we send to multicast group
+			--multicast IP range from 224.0.0.0 to 239.255.255.255
+			--we simple select on and use the same in clients' code
+			send:sendto(msg, "239.192.1.1", 11111)
+
+			--then we enable broadcast option
+			local done = send:setoption('broadcast', true)
+			if done then
+				--and broadcast the message
+				--global broadcast address is 255.255.255.255
+				send:sendto(msg, "255.255.255.255", 11111)
+				--and we disable broadcast option
+				send:setoption('broadcast', false)
+			end
+		end
+	end
+	
+	local broadcastIP = broadcastIPFunc()
+	
 	cmd = ""
 	function timer:action_cb()
+		--print("Come on!")
+		--print(c,sockTerm.closed)
 		local line,err, stat,redirectIO
 		timer.run = "NO"	-- Stop the timer
-		if not c then
+		if not c and not sockTerm.closed then	-- If nothing connected and a previous connection closed not there then
 			-- Broadcast ip and port to anyone listening
-			-- ##################################################
+			--print("Broadcast IP")
+			broadcastIP()
 			c,msg = s:accept()
+			if c then
+				c:settimeout(0)
+			end
 		end
 		if c then
+			--print("Already connected")
 			line,err = c:receive()	-- Receive a line from the connected client
 			msg = ""	-- Response message back to socket
 			if line then
-				cmd = cmd..line
-				if not sockTerm.co then	-- check if a coroutine is already in process
-					-- Check if command is incomplete
-					if incomplete(cmd) then
-						cmd = cmd.."\n\t"
-						timer.run = "YES"	-- Restart the timer
-						return
-					else
-						-- Execute the command here
-						local f
-						f,err = load(cmd,"=stdin","bt",sockTerm.env)
-						if not f then
-							msg = err.."\n"
-							-- Add cmd to command history
-							if cmd ~= sockTerm.history[#sockTerm.history] then
-								sockTerm.history[#sockTerm.history + 1] = cmd
-								sockTerm.history[0] = #sockTerm.history+1
+				if line:sub(1,#SPMSG) == SPMSG then
+					-- This is a special command
+					line = line:sub(#SPMSG+1,-1)
+					
+				else
+					cmd = cmd..line
+					if not sockTerm.co then	-- check if a coroutine is already in process
+						-- Check if command is incomplete
+						if incomplete(cmd) then
+							cmd = cmd.."\n\t"
+							stat,err = c:send(SPMSG.."\n")
+							if not stat and err == "closed" then
+								c = nil
+								sockTerm.closed = true
 							end
-							addLog(sockTerm.logFile,cmd.."\n"..msg)
-							cmd = ""	-- refresh the command
 							timer.run = "YES"	-- Restart the timer
 							return
 						else
-							sockTerm.co = coroutine.create(f)
-							stat,err = coroutine.resume(sockTerm.co)
+							-- Execute the command here
+							local f
+							f,err = load(cmd,"=stdin","bt",sockTerm.env)
+							if not f then
+								-- Add cmd to command history
+								if cmd ~= sockTerm.history[#sockTerm.history] then
+									sockTerm.history[#sockTerm.history + 1] = cmd
+									sockTerm.history[0] = #sockTerm.history+1
+								end
+								addLog(sockTerm.logFile,cmd.."\n"..err.."\n")
+								cmd = ""	-- refresh the command
+								stat,err = c:send(err..sockCR.."\n")
+								if not stat and err == "closed" then
+									c = nil
+									sockTerm.closed = true
+								end
+								timer.run = "YES"	-- Restart the timer
+								return
+							else
+								addLog(sockTerm.logFile,cmd.."\n")
+								sockTerm.co = coroutine.create(f)
+								stat,err = coroutine.resume(sockTerm.co)
+							end
+						end
+					else
+						-- Coroutine was already in process. Pass the received data into it.
+						addLog(sockTerm.logFile,cmd.."\n")
+						stat,err = coroutine.resume(sockTerm.co,cmd)
+					end
+					if not stat then
+						msg = err.."\n"
+						stat,err = c:send(err..sockCR.."\n")
+						if not stat and err == "closed" then
+							c = nil
+							sockTerm.closed = true
+						end
+					elseif err == "UI" then
+						-- Code needs user input through io.read so the input till the next enter goes to this coroutine
+						redirectIO = true
+					end
+					if not redirectIO then
+						sockTerm.co = nil	-- destroy the coroutine
+						-- Add cmd to command history
+						if cmd ~= sockTerm.history[#sockTerm.history] then
+							sockTerm.history[#sockTerm.history + 1] = cmd
+							sockTerm.history[0] = #sockTerm.history+1
 						end
 					end
-				else
-					-- Coroutine was already in process. Pass the received data into it.
-					stat,err = coroutine.resume(sockTerm.co,cmd)
-				end
-				if not stat then
-					msg = msg..err.."\n"
-					c:send(msg)
-				elseif err == "UI" then
-					-- Code needs user input through io.read so the input till the next enter goes to this coroutine
-					redirectIO = true
-				end
-				if not redirectIO then
-					sockTerm.co = nil	-- destroy the coroutine
-					-- Add cmd to command history
-					if cmd ~= sockTerm.history[#sockTerm.history] then
-						sockTerm.history[#sockTerm.history + 1] = cmd
-						sockTerm.history[0] = #sockTerm.history+1
-					end
-				end
-				addLog(sockTerm.logFile,cmd.."\n"..msg)
-				cmd = ""
+					addLog(sockTerm.logFile,msg)
+					cmd = ""
+				end		-- if line:sub(1,#SPMSG) = SPMSG then ends
+			elseif err == "closed" then
+				-- Connection closed
+				c = nil
+				sockTerm.closed = true
 			end		-- if line then ends
 		end		-- if c then ends
 		timer.run = "YES"	-- Restart the timer
 	end		-- function timer:action_cb() ends
 	numOfSockTerms = numOfSockTerms + 1
+	timer.run = "YES"
 	return sockTerm
 end
