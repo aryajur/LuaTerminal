@@ -17,7 +17,8 @@ local io = io
 local require = require
 
 -- For debugging
-local print = print
+--local print = print
+--local pairs = pairs
 
 -- Create the module table here
 local M = {}
@@ -26,7 +27,7 @@ _ENV = M		-- Lua 5.2
 
 -- Create the module table ends
 
-_VERSION = "1.2014.09.09"
+_VERSION = "1.2014.09.10"
 MAXTEXT = 8192		-- maximum characters in text box
 
 local numOfTerms = 0	-- To maintain the number of terminals being managed
@@ -156,6 +157,11 @@ local function k_any(term,c)
 					term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
 					return iup.IGNORE
 				else
+					-- Add cmd to command history
+					if cmd ~= term.data.history[#term.data.history] then
+						term.data.history[#term.data.history + 1] = cmd
+						term.data.history[0] = #term.data.history+1
+					end
 					term.data.co = coroutine.create(f)
 					stat,err = coroutine.resume(term.data.co)
 				end
@@ -173,11 +179,6 @@ local function k_any(term,c)
 		if not redirectIO then
 			term.data.co = nil	-- destroy the coroutine
 			term.append = ">"
-			-- Add cmd to command history
-			if cmd ~= term.data.history[#term.data.history] then
-				term.data.history[#term.data.history + 1] = cmd
-				term.data.history[0] = #term.data.history+1
-			end
 		end
 		addLog(term.data.logFile,term.value:sub(promptPos+2,-1))
 		trimText(term)
@@ -412,7 +413,7 @@ function newSocketTerm(env,redirectIO,logFile)
 			--print("Already connected")
 			line,err = c:receive()	-- Receive a line from the connected client
 			msg = ""	-- Response message back to socket
-			if line then
+			if line and line ~= "" then
 				if line:sub(1,#SPMSG) == SPMSG then
 					-- This is a special command
 					line = line:sub(#SPMSG+1,-1)
@@ -423,7 +424,7 @@ function newSocketTerm(env,redirectIO,logFile)
 							if sockTerm.history[0] < 1 then
 								sockTerm.history[0] = 1
 							end
-							c:send(sockTerm.history[sockTerm.history[0]].."\n")
+							c:send(sockTerm.history[sockTerm.history[0]]:gsub("\n",SPMSG).."\n")
 						end
 					elseif line:sub(1,4) == "DOWN" then
 						-- return the next command
@@ -432,20 +433,20 @@ function newSocketTerm(env,redirectIO,logFile)
 							if sockTerm.history[0] > #sockTerm.history then
 								c:send("\n")
 							else
-								c:send(sockTerm.history[sockTerm.history[0]].."\n")
+								c:send(sockTerm.history[sockTerm.history[0]]:gsub("\n",SPMSG).."\n")
 							end
 						end
 					elseif line:sub(1,4) == "LEFT" then
 						-- return the 1st command
 						if sockTerm.history[0] > 0 then
 							sockTerm.history[0] = 1
-							c:send(sockTerm.history[sockTerm.history[0]].."\n")
+							c:send(sockTerm.history[sockTerm.history[0]]:gsub("\n",SPMSG).."\n")
 						end
 					elseif line:sub(1,5) == "RIGHT" then
 						-- Return the last command
 						if sockTerm.history[0] > 0 then
 							sockTerm.history[0] = #sockTerm.history
-							c:send(sockTerm.history[sockTerm.history[0]].."\n")
+							c:send(sockTerm.history[sockTerm.history[0]]:gsub("\n",SPMSG).."\n")
 						end
 					end
 				else
@@ -482,6 +483,11 @@ function newSocketTerm(env,redirectIO,logFile)
 								return
 							else
 								addLog(sockTerm.logFile,cmd.."\n")
+								-- Add cmd to command history
+								if cmd ~= sockTerm.history[#sockTerm.history] then
+									sockTerm.history[#sockTerm.history + 1] = cmd
+									sockTerm.history[0] = #sockTerm.history+1
+								end
 								sockTerm.co = coroutine.create(f)
 								stat,err = coroutine.resume(sockTerm.co)
 							end
@@ -504,16 +510,11 @@ function newSocketTerm(env,redirectIO,logFile)
 					end
 					if not redirectIO then
 						sockTerm.co = nil	-- destroy the coroutine
-						-- Add cmd to command history
-						if cmd ~= sockTerm.history[#sockTerm.history] then
-							sockTerm.history[#sockTerm.history + 1] = cmd
-							sockTerm.history[0] = #sockTerm.history+1
-						end
 					end
 					addLog(sockTerm.logFile,msg)
 					cmd = ""
 				end		-- if line:sub(1,#SPMSG) = SPMSG then ends
-			elseif err == "closed" then
+			elseif not line and err == "closed" then
 				-- Connection closed
 				c = nil
 				sockTerm.closed = true
