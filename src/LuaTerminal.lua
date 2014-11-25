@@ -15,6 +15,7 @@ local load = load
 local coroutine = coroutine
 local io = io
 local require = require
+local table = table
 
 -- For debugging
 --local print = print
@@ -27,7 +28,7 @@ _ENV = M		-- Lua 5.2
 
 -- Create the module table ends
 
-_VERSION = "1.2014.09.10"
+_VERSION = "1.2014.11.25"
 MAXTEXT = 8192		-- maximum characters in text box
 
 local numOfTerms = 0	-- To maintain the number of terminals being managed
@@ -261,8 +262,8 @@ function newTerm(env,redirectIO, logFile)
 		-- Modify the print statement
 		if env.print then
 			env.print = function(...)
-				local t = {...}
-				for i = 1,#t do
+				local t = table.pack(...)
+				for i = 1,t.n do
 					if i > 1 then
 						term.append = "\t"
 					end
@@ -275,8 +276,8 @@ function newTerm(env,redirectIO, logFile)
 		if env.io and type(env.io) == "table" then
 			-- modify io.write
 			env.io.write = function(...)
-				local t = {...}
-				for i = 1,#t do
+				local t = table.pack(...)
+				for i = 1,t.n do
 					term.append = tostring(t[i])
 				end
 			end
@@ -332,9 +333,9 @@ function newSocketTerm(env,redirectIO,logFile)
 		-- Modify the print statement
 		if env.print then
 			env.print = function(...)
-				local t = {...}
+				local t = table.pack(...)
 				local str = ""
-				for i = 1,#t do
+				for i = 1,t.n do
 					if i > 1 then
 						str = str.."\t"
 					end
@@ -348,9 +349,9 @@ function newSocketTerm(env,redirectIO,logFile)
 		if env.io and type(env.io) == "table" then
 			-- modify io.write
 			env.io.write = function(...)
-				local t = {...}
+				local t = table.pack(...)
 				str = ""
-				for i = 1,#t do
+				for i = 1,t.n do
 					str = str..tostring(t[i])
 				end
 				c:send(str.."\n")
