@@ -28,7 +28,7 @@ _ENV = M		-- Lua 5.2
 
 -- Create the module table ends
 
-_VERSION = "1.2014.11.25"
+_VERSION = "1.2014.12.6"
 MAXTEXT = 8192		-- maximum characters in text box
 
 local numOfTerms = 0	-- To maintain the number of terminals being managed
@@ -44,6 +44,8 @@ end
 -- Function called when terminal is mapped
 local function map_cb(term)
 	if term.data.prompt[1] == 0 and term.data.prompt[2] == 0 then
+		-- Display the start message
+		term.append = "LuaTerminal version ".._VERSION.."\n"
 		-- Display the prompt
 		term.append = ">"
 		term.data.prompt = {1,1}
@@ -253,7 +255,8 @@ function newTerm(env,redirectIO, logFile)
 		multiline = "YES",
 		expand = "YES",
 		border = "NO",
-		font = "Dejavu Sans Mono, 10"
+		font = "Courier, 10",
+		fgcolor = "0 150 150"
 	}
 	term.map_cb = map_cb
 	term.k_any = k_any
@@ -262,7 +265,7 @@ function newTerm(env,redirectIO, logFile)
 		-- Modify the print statement
 		if env.print then
 			env.print = function(...)
-				local t = table.pack(...)
+				local t = table.pack(...) -- used this to get the nil parameters as well
 				for i = 1,t.n do
 					if i > 1 then
 						term.append = "\t"
