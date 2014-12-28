@@ -28,7 +28,7 @@ _ENV = M		-- Lua 5.2
 
 -- Create the module table ends
 
-_VERSION = "1.2014.12.6"
+_VERSION = "1.2014.12.28"
 MAXTEXT = 8192		-- maximum characters in text box
 
 local numOfTerms = 0	-- To maintain the number of terminals being managed
@@ -48,7 +48,7 @@ local function map_cb(term)
 		term.append = "LuaTerminal version ".._VERSION.."\n"
 		-- Display the prompt
 		term.append = ">"
-		term.data.prompt = {1,1}
+		term.data.prompt = {2,1}
 	end
 end
 
