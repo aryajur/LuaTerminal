@@ -1,8 +1,5 @@
 -- To test LuaTerminal module
 
--- package.path = package.path..";./src/?.lua"	-- For Zerobrane
-package.path = package.path..";./../src/?.lua"
-
 require("iuplua")
 lt = require("LuaTerminal")
 
