@@ -1,7 +1,7 @@
 package = "LuaTerminal"
-version = "1.16.06.16-1"
+version = "1.16.06.16-4"
 source = {
-	url = "https://github.com/aryajur/LuaTerminal.git",
+	url = "git://github.com/aryajur/LuaTerminal.git",
 	tag = "1.16.06"
 }
 description = {
