@@ -1,0 +1,12 @@
+for i = 1,5 do
+	print("Hello")
+	end
+Hello
+Hello
+Hello
+Hello
+Hello
+>exit
+	;
+stdin:2: syntax error near ';'
+>

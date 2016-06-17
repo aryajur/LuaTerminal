@@ -3,7 +3,7 @@
 require("iuplua")
 require("iuplua_scintilla")
 lt = require("LuaTerminal")
-
+lt.USESCINTILLA = true
 -- Create terminal
 newterm = lt.newTerm(_ENV,true,"testlog.txt")
 --print("newterm: ", newterm)

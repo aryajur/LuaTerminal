@@ -30,7 +30,7 @@ _ENV = M		-- Lua 5.2+
 
 _VERSION = "1.16.06.16"
 MAXTEXT = 8192		-- maximum characters in text box
-USESCINTILLA = true
+USESCINTILLA = false
 
 local numOfTerms = 0	-- To maintain the number of terminals being managed
 local numOfSockTerms = 0	-- To maintain the number of socket terminals being managed
