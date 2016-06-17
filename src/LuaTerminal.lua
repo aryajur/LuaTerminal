@@ -60,6 +60,7 @@ local function map_cb(term)
 		-- Display the prompt
 		term.append = ">"
 		term.data.prompt = {2-offset,1-offset}
+		term.caretpos = #term.value
 	end
 end
 
@@ -151,6 +152,7 @@ local function k_any(term,c)
 			-- Check if command is incomplete
 			if incomplete(cmd) then
 				term.append = "\n\t"
+				term.caretpos = #term.value
 				trimText(term)
 				return iup.IGNORE
 			else
@@ -169,6 +171,7 @@ local function k_any(term,c)
 					trimText(term)
 					-- Update the prompt position
 					term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
+					term.caretpos = #term.value
 					return iup.IGNORE
 				else
 					-- Add cmd to command history
@@ -182,6 +185,7 @@ local function k_any(term,c)
 			end
 		else
 			term.append = "\n"
+			term.caretpos = #term.value
 			stat,err = coroutine.resume(term.data.co,cmd)
 		end
 		if not stat then
@@ -268,6 +272,7 @@ function newTerm(env,redirectIO, logFile)
 			appendnewline = "NO",
 			expand = "YES",
 			border = "NO",
+			tabsize = 4,
 			lexerlanguage = "lua",
 			keywords0 = "and break do else elseif end false for function goto if in local nil not or repeat return then true until while",
 			keywords1 = "print table string io coroutine table.unpack",
@@ -293,6 +298,7 @@ function newTerm(env,redirectIO, logFile)
 			multiline = "YES",
 			expand = "YES",
 			border = "NO",
+			tabsize = 4,
 			font = "Courier, 10",
 			fgcolor = "0 150 150"
 		}
