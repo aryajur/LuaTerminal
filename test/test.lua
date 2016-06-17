@@ -1,6 +1,7 @@
 -- To test LuaTerminal module
 
 require("iuplua")
+require("iuplua_scintilla")
 lt = require("LuaTerminal")
 
 -- Create terminal

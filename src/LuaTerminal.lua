@@ -18,37 +18,48 @@ local require = require
 local table = table
 
 -- For debugging
---local print = print
+local print = print
 --local pairs = pairs
 
 -- Create the module table here
 local M = {}
 package.loaded[...] = M
-_ENV = M		-- Lua 5.2
+_ENV = M		-- Lua 5.2+
 
 -- Create the module table ends
 
-_VERSION = "1.2014.12.28"
+_VERSION = "1.16.06.16"
 MAXTEXT = 8192		-- maximum characters in text box
+USESCINTILLA = true
 
 local numOfTerms = 0	-- To maintain the number of terminals being managed
 local numOfSockTerms = 0	-- To maintain the number of socket terminals being managed
 local socket
 local sockCR = "@#"
+local offset = 0	-- Offset to the row and column indexes in case scintilla is used
 
 -- Check some iup things to see if it is really loaded
-if type(iup) ~= "table" or not iup.GetGlobal or type(iup.GetGlobal) ~= "function" or not iup.text or type(iup.text) ~= "function" then
+if not iup or type(iup) ~= "table" or not iup.GetGlobal or type(iup.GetGlobal) ~= "function" or not iup.text or type(iup.text) ~= "function" then
+	package.loaded[...] = nil
 	return nil, "iup should be loaded in the global iup variable before loading the module."
+end
+
+if USESCINTILLA and not iup.scintilla or type(iup.scintilla) ~= "function" then
+	package.loaded[...] = nil
+	return nil, "iup scintilla should be loaded if USESCINTILLA is set to true."
 end
 
 -- Function called when terminal is mapped
 local function map_cb(term)
+	if USESCINTILLA then
+		offset = 1
+	end
 	if term.data.prompt[1] == 0 and term.data.prompt[2] == 0 then
 		-- Display the start message
 		term.append = "LuaTerminal version ".._VERSION.."\n"
 		-- Display the prompt
 		term.append = ">"
-		term.data.prompt = {2,1}
+		term.data.prompt = {2-offset,1-offset}
 	end
 end
 
@@ -92,7 +103,7 @@ local function trimText(term)
 		else
 			term.value = term.value:sub(-term.data.maxText,-1):match(".-\n(.+)$")
 		end
-		term.caretpos = #term.value
+		term.caretpos = #term.value-offset
 	end
 end
 
@@ -188,6 +199,7 @@ local function k_any(term,c)
 		-- Update the prompt position
 		term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
 		--print("prompt: ",term.data.prompt[1],term.data.prompt[2])
+		term.caretpos = #term.value
 		return iup.IGNORE
 	elseif c==iup.K_cUP then		-- up arrow pressed
 		-- Go to the previous command in the history if cntrl is pressed
@@ -250,14 +262,41 @@ function newTerm(env,redirectIO, logFile)
 		env = {}
 	end
 	-- Create the terminal multiline text control
-	local term = iup.text {
-		appendnewline = "NO",
-		multiline = "YES",
-		expand = "YES",
-		border = "NO",
-		font = "Courier, 10",
-		fgcolor = "0 150 150"
-	}
+	local term 
+	if USESCINTILLA then
+		term = iup.scintilla {
+			appendnewline = "NO",
+			expand = "YES",
+			border = "NO",
+			lexerlanguage = "lua",
+			keywords0 = "and break do else elseif end false for function goto if in local nil not or repeat return then true until while",
+			keywords1 = "print table string io coroutine table.unpack",
+			stylefont32 = "Consolas",
+			stylefontsize32 = "11",
+			--styleclearall = "Yes",
+			stylefgcolor1 = "0 128 0",	-- 1 Lua cooment
+			stylefgcolor2 = "0 128 0",	-- 2 Lua comment line
+			stylefgcolor4 = "128 0 0",	-- 4 Number
+			stylefgcolor5 = "0 0 255",	-- 5 Keyword
+			stylefgcolor6 = "160 20 20", -- 6 String
+			stylefgcolor7 = "128 0 0",	-- 7 Character
+			stylefgcolor9 = "0 0 255",	-- 9 Preprocessor block
+			stylefgcolor10 = "255 0 255", -- 10 Operator
+			--stylefgcolor11 = "0 255 0",	-- 11 Identifier
+			stylefgcolor13 = "0 128 128",		-- Keyword set number 2
+			stylebold10 = "YES",
+			marginwidth0 = "50"		
+		}
+	else
+		term = iup.text {
+			appendnewline = "NO",
+			multiline = "YES",
+			expand = "YES",
+			border = "NO",
+			font = "Courier, 10",
+			fgcolor = "0 150 150"
+		}
+	end
 	term.map_cb = map_cb
 	term.k_any = k_any
 	term.action = action
