@@ -16,9 +16,10 @@ local coroutine = coroutine
 local io = io
 local require = require
 local table = table
+local package = package
 
 -- For debugging
-local print = print
+--local print = print
 --local pairs = pairs
 
 -- Create the module table here
@@ -28,9 +29,9 @@ _ENV = M		-- Lua 5.2+
 
 -- Create the module table ends
 
-_VERSION = "1.16.06.16"
+_VERSION = "1.17.08.26"
 MAXTEXT = 8192		-- maximum characters in text box
-USESCINTILLA = false
+USESCINTILLA = true
 
 local numOfTerms = 0	-- To maintain the number of terminals being managed
 local numOfSockTerms = 0	-- To maintain the number of socket terminals being managed
@@ -44,7 +45,11 @@ if not iup or type(iup) ~= "table" or not iup.GetGlobal or type(iup.GetGlobal) ~
 	return nil, "iup should be loaded in the global iup variable before loading the module."
 end
 
-if USESCINTILLA and not iup.scintilla or type(iup.scintilla) ~= "function" then
+if USESCINTILLA then
+	require("iuplua_scintilla")
+end
+
+if USESCINTILLA and (not iup.scintilla or type(iup.scintilla) ~= "function") then
 	package.loaded[...] = nil
 	return nil, "iup scintilla should be loaded if USESCINTILLA is set to true."
 end
@@ -129,6 +134,71 @@ local function addLog(logFile,text)
 	end
 end
 
+-- Executes the string cmd using a coroutine. Does not append the cmd to the terminal
+local function execCmd(term,cmd,log)
+	local stat,err, redirectIO
+	-- Check if cmd goes to already executing script or its a new chunk
+	if not term.data.co then
+		-- Check if command is incomplete
+		if incomplete(cmd) then
+			term.append = "\n\t"
+			term.caretpos = #term.value
+			trimText(term)
+			return iup.IGNORE
+		else
+			-- Execute the command here
+			term.append = "\n"
+			local f
+			f,err = load(cmd,"=stdin","bt",term.data.env)
+			if not f then
+				term.append = err.."\n>"
+				-- Add cmd to command history
+				if cmd ~= term.data.history[#term.data.history] then
+					term.data.history[#term.data.history + 1] = cmd
+					term.data.history[0] = #term.data.history+1
+				end
+				addLog(term.data.logFile,term.value:sub(term.caretpos+2,-1))
+				trimText(term)
+				-- Update the prompt position
+				term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
+				term.caretpos = #term.value
+				return iup.IGNORE
+			else
+				-- Add cmd to command history
+				if cmd ~= term.data.history[#term.data.history] then
+					term.data.history[#term.data.history + 1] = cmd
+					term.data.history[0] = #term.data.history+1
+				end
+				term.data.co = coroutine.create(f)
+				stat,err = coroutine.resume(term.data.co)
+			end
+		end
+	else
+		term.append = "\n"
+		term.caretpos = #term.value
+		stat,err = coroutine.resume(term.data.co,cmd)
+	end
+	if not stat then
+		term.append = err.."\n"
+	elseif err == "UI" then
+		-- Code needs user input through io.read so the input till the next enter goes to this coroutine
+		redirectIO = true
+	end
+	if not redirectIO then
+		term.data.co = nil	-- destroy the coroutine
+		term.append = ">"
+	end
+	if log then
+		local promptPos = iup.TextConvertLinColToPos(term, term.data.prompt[1], term.data.prompt[2])
+		addLog(term.data.logFile,term.value:sub(promptPos+2,-1))
+	end
+	trimText(term)
+	-- Update the prompt position
+	term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
+	--print("prompt: ",term.data.prompt[1],term.data.prompt[2])
+	term.caretpos = #term.value
+end
+
 -- Callback when backspace pressed
 local function k_any(term,c)
 	local caret = term.caret
@@ -142,68 +212,11 @@ local function k_any(term,c)
 		end
 		return iup.DEFAULT
 	elseif c==iup.K_CR then
-		local stat,err, redirectIO
 		-- Execute the current text
 		local promptPos = iup.TextConvertLinColToPos(term, term.data.prompt[1], term.data.prompt[2])
 		local cmd = term.value:sub(promptPos+2,-1)
 		--print("new text is: ",cmd)
-		-- Check if cmd goes to already executing script or its a new chunk
-		if not term.data.co then
-			-- Check if command is incomplete
-			if incomplete(cmd) then
-				term.append = "\n\t"
-				term.caretpos = #term.value
-				trimText(term)
-				return iup.IGNORE
-			else
-				-- Execute the command here
-				term.append = "\n"
-				local f
-				f,err = load(cmd,"=stdin","bt",term.data.env)
-				if not f then
-					term.append = err.."\n>"
-					-- Add cmd to command history
-					if cmd ~= term.data.history[#term.data.history] then
-						term.data.history[#term.data.history + 1] = cmd
-						term.data.history[0] = #term.data.history+1
-					end
-					addLog(term.data.logFile,term.value:sub(promptPos+2,-1))
-					trimText(term)
-					-- Update the prompt position
-					term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
-					term.caretpos = #term.value
-					return iup.IGNORE
-				else
-					-- Add cmd to command history
-					if cmd ~= term.data.history[#term.data.history] then
-						term.data.history[#term.data.history + 1] = cmd
-						term.data.history[0] = #term.data.history+1
-					end
-					term.data.co = coroutine.create(f)
-					stat,err = coroutine.resume(term.data.co)
-				end
-			end
-		else
-			term.append = "\n"
-			term.caretpos = #term.value
-			stat,err = coroutine.resume(term.data.co,cmd)
-		end
-		if not stat then
-			term.append = err.."\n"
-		elseif err == "UI" then
-			-- Code needs user input through io.read so the input till the next enter goes to this coroutine
-			redirectIO = true
-		end
-		if not redirectIO then
-			term.data.co = nil	-- destroy the coroutine
-			term.append = ">"
-		end
-		addLog(term.data.logFile,term.value:sub(promptPos+2,-1))
-		trimText(term)
-		-- Update the prompt position
-		term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
-		--print("prompt: ",term.data.prompt[1],term.data.prompt[2])
-		term.caretpos = #term.value
+		term:execCmd(cmd,true)
 		return iup.IGNORE
 	elseif c==iup.K_cUP then		-- up arrow pressed
 		-- Go to the previous command in the history if cntrl is pressed
@@ -306,6 +319,7 @@ function newTerm(env,redirectIO, logFile)
 	term.map_cb = map_cb
 	term.k_any = k_any
 	term.action = action
+	term.execCmd = execCmd
 	if redirectIO then
 		-- Modify the print statement
 		if env.print then
@@ -398,7 +412,7 @@ function newSocketTerm(env,redirectIO,logFile)
 			-- modify io.write
 			env.io.write = function(...)
 				local t = table.pack(...)
-				str = ""
+				local str = ""
 				for i = 1,t.n do
 					str = str..tostring(t[i])
 				end
