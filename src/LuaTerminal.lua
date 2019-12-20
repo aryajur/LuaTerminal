@@ -17,6 +17,7 @@ local io = io
 local require = require
 local table = table
 local package = package
+local setmetatable = setmetatable
 
 -- For debugging
 --local print = print
@@ -29,9 +30,9 @@ _ENV = M		-- Lua 5.2+
 
 -- Create the module table ends
 
-_VERSION = "1.17.08.26"
+_VERSION = "1.19.12.19"
 MAXTEXT = 8192		-- maximum characters in text box
-USESCINTILLA = true
+USESCINTILLA = false
 
 local numOfTerms = 0	-- To maintain the number of terminals being managed
 local numOfSockTerms = 0	-- To maintain the number of socket terminals being managed
@@ -273,13 +274,15 @@ end
 
 -- env is the environment associated with the terminal where the lua commands will be executed
 -- logFile is the name if the logFile where the terminal output is backed up till the last executed command
--- redirectIO is a boolean, if true then print function and io.read and io.write will be redirected to use the text control
+-- redirectIO is a boolean, if true then print function and io.read and io.write (if they exist in the environment) will be redirected to use the text control
+-- if redirectIO is true it returns the new versions of print and io.write to use in the host application to use the terminal as the output
 function newTerm(env,redirectIO, logFile)
 	if not env then
 		env = {}
 	end
+	local tenv = env
 	-- Create the terminal multiline text control
-	local term 
+	local term,prnt,iowrite,iprint,iiowrite,iioread
 	if USESCINTILLA then
 		term = iup.scintilla {
 			appendnewline = "NO",
@@ -321,9 +324,34 @@ function newTerm(env,redirectIO, logFile)
 	term.action = action
 	term.execCmd = execCmd
 	if redirectIO then
+		local doPrint,doiowrite
 		-- Modify the print statement
+		prnt = function(...)
+			-- 1st get whatever was written on the terminal so that remains for the user
+			local promptPos = iup.TextConvertLinColToPos(term, term.data.prompt[1], term.data.prompt[2])
+			local cmd = term.value:sub(promptPos+2,-1)
+			-- Remove whatever was written until the prompt
+			term.value = term.value:sub(1,promptPos)
+			local t = table.pack(...) -- used this to get the nil parameters as well
+			for i = 1,t.n do
+				if i > 1 then
+					term.append = "\t"
+				end
+				term.append = tostring(t[i])
+			end
+			term.append = "\n"
+			-- Now place the prompt and cmd in the end
+			term.append = ">"
+			-- Update the prompt position
+			term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
+			term.append = cmd
+			term.caretpos = #term.value
+		end
+
 		if env.print then
-			env.print = function(...)
+			doPrint = true
+			-- The print function in the terminal is slightly different than the above since the command should not be copied down
+			iprint = function(...)
 				local t = table.pack(...) -- used this to get the nil parameters as well
 				for i = 1,t.n do
 					if i > 1 then
@@ -332,28 +360,79 @@ function newTerm(env,redirectIO, logFile)
 					term.append = tostring(t[i])
 				end
 				term.append = "\n"
+				term.caretpos = #term.value
 			end
 		end
 		-- modify io.write and io.read
+		iowrite = function(...)
+			-- 1st get whatever was written on the terminal so that remains for the user
+			local promptPos = iup.TextConvertLinColToPos(term, term.data.prompt[1], term.data.prompt[2])
+			local cmd = term.value:sub(promptPos+2,-1)
+			-- Remove whatever was written until the prompt
+			term.value = term.value:sub(1,promptPos-1)
+			local t = table.pack(...)
+			for i = 1,t.n do
+				term.append = tostring(t[i])
+			end
+			-- Update the prompt position
+			term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
+			term.append = cmd
+			term.caretpos = #term.value
+		end
 		if env.io and type(env.io) == "table" then
+			doiowrite = true
 			-- modify io.write
-			env.io.write = function(...)
+			-- The io.write function in the terminal is slightly different in that it does not copy the command down
+			iiowrite = function(...)
 				local t = table.pack(...)
 				for i = 1,t.n do
 					term.append = tostring(t[i])
 				end
+				term.caretpos = #term.value
 			end
 			-- modify io.read
-			env.io.read = function()
+			iioread = function()
 				local inp = coroutine.yield("UI")	-- To indicate it needs to read user input
 				return inp
 			end
 		end
-
-	end
+		-- Create a cover layer on the environment
+		if doPrint or doiowrite then
+			local meta = {
+				__index = function(t,k)
+					if k == "print" and doPrint then
+						return iprint
+					elseif k == "io" and doiowrite then
+						local t = {}
+						local tmeta = {
+							__index = function(t,k)
+								if k == "write" then
+									return iiowrite
+								elseif k == "read" then
+									return iioread
+								else
+									return env.io[k]
+								end
+							end,
+							__newindex = function(t,k,v)
+								env.io[k] = v
+							end
+						}
+						return setmetatable(t,tmeta)
+					else
+						return env[k]
+					end
+				end,
+				__newindex = function(t,k,v)
+					env[k] = v
+				end
+			}
+			tenv = setmetatable({},meta)
+		end
+	end		-- if redirectIO then ends
 	term.data = {
 		history = {[0] = 0},	-- To store the command history, index 0 contains the command pointer
-		env = env,		-- The environment where the scripts are executed
+		env = tenv,		-- The environment where the scripts are executed
 		formats = {},		-- To store all formatting applied to the 
 		logFile = logFile, 	-- Where all the terminal text is written to
 		maxText = MAXTEXT,	-- Maximum number of characters in the text box
@@ -362,7 +441,7 @@ function newTerm(env,redirectIO, logFile)
 	
 	numOfTerms = numOfTerms + 1
 	
-	return term
+	return term,prnt,iowrite
 end
 
 -- To create a terminal on a socket to allow remote connection by other applications
