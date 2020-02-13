@@ -30,7 +30,7 @@ _ENV = M		-- Lua 5.2+
 
 -- Create the module table ends
 
-_VERSION = "1.19.12.19"
+_VERSION = "1.20.02.12"
 MAXTEXT = 8192		-- maximum characters in text box
 USESCINTILLA = false
 
@@ -217,7 +217,9 @@ local function k_any(term,c)
 		local promptPos = iup.TextConvertLinColToPos(term, term.data.prompt[1], term.data.prompt[2])
 		local cmd = term.value:sub(promptPos+2,-1)
 		--print("new text is: ",cmd)
+		term.executing = true	-- Mark execution has started
 		term:execCmd(cmd,true)
+		term.executing = nil
 		return iup.IGNORE
 	elseif c==iup.K_cUP then		-- up arrow pressed
 		-- Go to the previous command in the history if cntrl is pressed
@@ -330,8 +332,10 @@ function newTerm(env,redirectIO, logFile)
 			-- 1st get whatever was written on the terminal so that remains for the user
 			local promptPos = iup.TextConvertLinColToPos(term, term.data.prompt[1], term.data.prompt[2])
 			local cmd = term.value:sub(promptPos+2,-1)
-			-- Remove whatever was written until the prompt
-			term.value = term.value:sub(1,promptPos)
+			if not term.executing then
+				-- Remove whatever was written until the prompt
+				term.value = term.value:sub(1,promptPos)
+			end
 			local t = table.pack(...) -- used this to get the nil parameters as well
 			for i = 1,t.n do
 				if i > 1 then
@@ -340,11 +344,13 @@ function newTerm(env,redirectIO, logFile)
 				term.append = tostring(t[i])
 			end
 			term.append = "\n"
-			-- Now place the prompt and cmd in the end
-			term.append = ">"
-			-- Update the prompt position
-			term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
-			term.append = cmd
+			if not term.executing then
+				-- Now place the prompt and cmd in the end
+				term.append = ">"
+				-- Update the prompt position
+				term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
+				term.append = cmd
+			end
 			term.caretpos = #term.value
 		end
 
@@ -368,15 +374,19 @@ function newTerm(env,redirectIO, logFile)
 			-- 1st get whatever was written on the terminal so that remains for the user
 			local promptPos = iup.TextConvertLinColToPos(term, term.data.prompt[1], term.data.prompt[2])
 			local cmd = term.value:sub(promptPos+2,-1)
-			-- Remove whatever was written until the prompt
-			term.value = term.value:sub(1,promptPos-1)
+			if not term.executing then
+				-- Remove whatever was written until the prompt
+				term.value = term.value:sub(1,promptPos-1)
+			end
 			local t = table.pack(...)
 			for i = 1,t.n do
 				term.append = tostring(t[i])
 			end
-			-- Update the prompt position
-			term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
-			term.append = cmd
+			if not term.executing then
+				-- Update the prompt position
+				term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
+				term.append = cmd
+			end
 			term.caretpos = #term.value
 		end
 		if env.io and type(env.io) == "table" then
