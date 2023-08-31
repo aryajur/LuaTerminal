@@ -30,7 +30,7 @@ _ENV = M		-- Lua 5.2+
 
 -- Create the module table ends
 
-_VERSION = "1.20.02.12"
+_VERSION = "1.23.08.30"
 MAXTEXT = 8192		-- maximum characters in text box
 USESCINTILLA = false
 
@@ -136,8 +136,10 @@ local function addLog(logFile,text)
 end
 
 -- Executes the string cmd using a coroutine. Does not append the cmd to the terminal
-local function execCmd(term,cmd,log)
+-- If nohist is true then the command is not added to the history
+local function execCmd(term,cmd,log,nohist)
 	local stat,err, redirectIO
+	--print("In execmd",cmd,nohist)
 	-- Check if cmd goes to already executing script or its a new chunk
 	if not term.data.co then
 		-- Check if command is incomplete
@@ -166,15 +168,17 @@ local function execCmd(term,cmd,log)
 				return iup.IGNORE
 			else
 				-- Add cmd to command history
-				if cmd ~= term.data.history[#term.data.history] then
+				if not nohist and cmd ~= term.data.history[#term.data.history] then
 					term.data.history[#term.data.history + 1] = cmd
 					term.data.history[0] = #term.data.history+1
 				end
+				--print("Create coroutine for command",cmd)
 				term.data.co = coroutine.create(f)
 				stat,err = coroutine.resume(term.data.co)
 			end
 		end
 	else
+		--print("Use cmd as user input and resume coroutine",cmd)
 		term.append = "\n"
 		term.caretpos = #term.value
 		stat,err = coroutine.resume(term.data.co,cmd)
@@ -182,6 +186,7 @@ local function execCmd(term,cmd,log)
 	if not stat then
 		term.append = err.."\n"
 	elseif err == "UI" then
+		--print("Need to get user input")
 		-- Code needs user input through io.read so the input till the next enter goes to this coroutine
 		redirectIO = true
 	end
@@ -198,6 +203,7 @@ local function execCmd(term,cmd,log)
 	term.data.prompt[1],term.data.prompt[2] = iup.TextConvertPosToLinCol(term, #term.value-1)
 	--print("prompt: ",term.data.prompt[1],term.data.prompt[2])
 	term.caretpos = #term.value
+	--print("Ending execmd",term.data.co)
 end
 
 -- Callback when backspace pressed
@@ -327,6 +333,7 @@ function newTerm(env,redirectIO, logFile)
 	term.execCmd = execCmd
 	if redirectIO then
 		local doPrint,doiowrite
+		-- Generate the print, io.write and io.read functions that can be used by scripts to use the terminal
 		-- Modify the print statement
 		prnt = function(...)
 			-- 1st get whatever was written on the terminal so that remains for the user
@@ -352,6 +359,7 @@ function newTerm(env,redirectIO, logFile)
 				term.append = cmd
 			end
 			term.caretpos = #term.value
+			iup.Flush()
 		end
 
 		if env.print then
@@ -388,6 +396,29 @@ function newTerm(env,redirectIO, logFile)
 				term.append = cmd
 			end
 			term.caretpos = #term.value
+			iup.Flush()
+		end
+		-- Modify the io.read
+		ioread = function()
+			local var = 1
+			while env["_VARX"..var] do
+				var = var + 1
+			end
+			--print("Variable number",var,term.data.co)
+			local co,exec = term.data.co,term.executing
+			term.data.co = nil
+			term.executing = true	-- Mark execution has started
+			term:execCmd("_VARX"..var.."=io.read()",nil,true)	-- Do not store in the history
+			-- Now we need to transfer control to iup to process the LuaTerminal GUI till we get the input
+			while not env["_VARX"..var] do
+				iup.LoopStepWait()
+			end
+			term.executing = exec
+			--print("Execution finished")
+			local value = env["_VARX"..var]
+			env["_VARX"..var] = nil
+			term.data.co = co
+			return value
 		end
 		if env.io and type(env.io) == "table" then
 			doiowrite = true
@@ -402,7 +433,9 @@ function newTerm(env,redirectIO, logFile)
 			end
 			-- modify io.read
 			iioread = function()
+				--print("in iioread")
 				local inp = coroutine.yield("UI")	-- To indicate it needs to read user input
+				--print("iioread yield returned")
 				return inp
 			end
 		end
@@ -451,7 +484,7 @@ function newTerm(env,redirectIO, logFile)
 	
 	numOfTerms = numOfTerms + 1
 	
-	return term,prnt,iowrite
+	return term,prnt,iowrite,ioread
 end
 
 -- To create a terminal on a socket to allow remote connection by other applications
