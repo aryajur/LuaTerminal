@@ -467,6 +467,7 @@ function newTerm(env,redirectIO, logFile)
 					end
 				end,
 				__newindex = function(t,k,v)
+					--print("LuaTerminal: ",t,k,v)
 					env[k] = v
 				end
 			}
