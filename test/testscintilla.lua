@@ -2,7 +2,7 @@
 
 require("wx")
 lt = require("LuaTerminal")
-lt.USESCINTILLA = false
+lt.USESCINTILLA = true
 
 -- First create the frame
 local frame =  wx.wxFrame( wx.NULL,            -- no parent for toplevel windows
@@ -21,8 +21,7 @@ MainSizer:Add(hSizer)
 PrintButton = wx.wxButton(frame, wx.wxID_ANY, "Print Debug", wx.wxDefaultPosition, wx.wxDefaultSize, 0, wx.wxDefaultValidator)
 hSizer:Add(PrintButton)
 PrintButton:Connect(wx.wxEVT_COMMAND_BUTTON_CLICKED,function(event)
-	print(newterm.term:GetLastPosition(),#newterm.Get(),#newterm.term:GetValue(),newterm.data.prompt,newterm.GetSelectionStart(),newterm.GetSelectionEnd(),newterm.GetCaretPos())
-	print("--")
+	print(newterm.GetLength(),newterm.data.prompt,newterm.GetSelectionStart(),newterm.GetSelectionEnd())
 	print(newterm.Get())
 	print("--")
 	print(newterm.Get():sub(newterm.GetSelectionStart(),newterm.GetSelectionEnd()))
