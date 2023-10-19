@@ -117,14 +117,16 @@ end
 -- If nohist is true then the command is not added to the history
 local function execCmd(term,cmd,log,nohist)
 	local stat,err, redirectIO
-	--print("In execmd",cmd,nohist)
+	--print("In execmd",cmd,nohist,term.data.co)
 	-- Check if cmd goes to already executing script or its a new chunk
 	if not term.data.co then
 		-- Check if command is incomplete
 		if incomplete(cmd) then
+			--print("Incomplete command")
 			term.Append("\n\t")
 			term.SetCaretPos(term.GetLength())
 			trimText(term)
+			return
 		else
 			-- Execute the command here
 			term.Append("\n")
@@ -142,6 +144,7 @@ local function execCmd(term,cmd,log,nohist)
 				-- Update the prompt position
 				term.data.prompt = term.GetLength()-offset
 				term.SetCaretPos(term.GetLength())
+				return
 			else
 				-- Add cmd to command history
 				if not nohist and cmd ~= term.data.history[#term.data.history] then
@@ -159,6 +162,7 @@ local function execCmd(term,cmd,log,nohist)
 		term.SetCaretPos(term.GetLength())
 		stat,err = coroutine.resume(term.data.co,cmd)
 	end
+	--print(stat,err)
 	if not stat then
 		term.Append(err.."\n")
 	elseif err == "UI" then
@@ -177,8 +181,8 @@ local function execCmd(term,cmd,log,nohist)
 	trimText(term)
 	-- Update the prompt position
 	term.data.prompt = term.GetLength()-offset
-	print("Post execCmd",term.data.prompt,term.GetLength(),#term.Get(),offset)
-	print(term.Get():sub(1,term.data.prompt))
+	--print("Post execCmd",term.data.prompt,term.GetLength(),#term.Get(),offset)
+	--print(term.Get():sub(1,term.data.prompt))
 	--print("prompt: ",term.data.prompt[1],term.data.prompt[2])
 	term.SetCaretPos(term.GetLength())
 	--print("Ending execmd",term.data.co)
@@ -258,7 +262,7 @@ local function k_any(term,event)
 		-- Execute the current text
 		local promptPos = term.data.prompt
 		local cmd = term.Get():sub(promptPos+1,-1)
-		print("new text is: ",cmd)
+		--print("new text is: ",cmd)
 		term.executing = true	-- Mark execution has started
 		term:execCmd(cmd,true)
 		term.executing = nil
@@ -601,7 +605,7 @@ function newTerm(parent,env,redirectIO, logFile)
 			-- 1st get whatever was written on the terminal so that remains for the user
 			local promptPos = term.data.prompt
 			local cmd = term.Get():sub(promptPos+1,-1)
-			print(cmd)
+			--print(cmd)
 			if not term.executing then
 				-- Remove whatever was written until the prompt
 				term.Set(term.Get():sub(1,promptPos))
@@ -644,8 +648,8 @@ function newTerm(parent,env,redirectIO, logFile)
 			-- 1st get whatever was written on the terminal so that remains for the user
 			local promptPos = term.data.prompt
 			local cmd = term.Get():sub(promptPos+1,-1)
-			print("We are here")
-			print(cmd)
+			--print("We are here")
+			--print(cmd)
 			if not term.executing then
 				-- Remove whatever was written until the prompt
 				term.Set(term.Get():sub(1,promptPos-1))
