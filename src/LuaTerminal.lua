@@ -24,6 +24,7 @@ local package = package
 
 -- For debugging
 local print = print
+local pcall = pcall
 
 -- Create the module table here
 local M = {}
@@ -41,6 +42,8 @@ local numOfSockTerms = 0	-- To maintain the number of socket terminals being man
 local socket
 local sockCR = "@#"
 local offset = 0	-- Offset to the row and column indexes in case scintilla is used
+
+local PARENT
 
 -- Check some iup things to see if it is really loaded
 if not wx or type(wx) ~= "table" then
@@ -152,6 +155,7 @@ local function execCmd(term,cmd,log,nohist)
 					term.data.history[0] = #term.data.history+1
 				end
 				--print("Create coroutine for command",cmd)
+				
 				term.data.co = coroutine.create(f)
 				stat,err = coroutine.resume(term.data.co)
 			end
@@ -163,6 +167,7 @@ local function execCmd(term,cmd,log,nohist)
 		stat,err = coroutine.resume(term.data.co,cmd)
 	end
 	--print(stat,err)
+	
 	if not stat then
 		term.Append(err.."\n")
 	elseif err == "UI" then
@@ -170,10 +175,12 @@ local function execCmd(term,cmd,log,nohist)
 		-- Code needs user input through io.read so the input till the next enter goes to this coroutine
 		redirectIO = true
 	end
+
 	if not redirectIO then
 		term.data.co = nil	-- destroy the coroutine
 		term.Append(">")
 	end
+	
 	if log then
 		local promptPos = term.data.prompt
 		addLog(term.data.logFile,term.Get():sub(promptPos+2,-1))
@@ -184,7 +191,9 @@ local function execCmd(term,cmd,log,nohist)
 	--print("Post execCmd",term.data.prompt,term.GetLength(),#term.Get(),offset)
 	--print(term.Get():sub(1,term.data.prompt))
 	--print("prompt: ",term.data.prompt[1],term.data.prompt[2])
+	
 	term.SetCaretPos(term.GetLength())
+	
 	--print("Ending execmd",term.data.co)
 end
 
@@ -250,7 +259,8 @@ end
 local function k_any(term,event)
 	local caret = term.GetCaretPos()
 	local c = event:GetKeyCode()
-	--print("Key pressed",c,wx.WXK_BACK,caret,term.data.prompt)
+	
+	--print("Key pressed",c,wx.WXK_BACK,caret,term.data.prompt,term.GetLength())
 	-- ignore Backspace pressed just after the current prompt
 	if c==wx.WXK_BACK then
 		if caret <= term.data.prompt then
@@ -261,7 +271,7 @@ local function k_any(term,event)
 		-- Execute the current text
 		local promptPos = term.data.prompt
 		local cmd = term.Get():sub(promptPos+1,-1)
-		--print("new text is: ",cmd)
+		print("new text is: ",cmd,#cmd)
 		term.executing = true	-- Mark execution has started
 		term:execCmd(cmd,true)
 		term.executing = nil
@@ -320,6 +330,16 @@ local function k_any(term,event)
 	end
 end
 
+local function k_cr_reject(term,event)
+	-- When Enter is pressed to execute something that Enter is placed in the text box after the KEY_DOWN event is processed. To reject that enter from appearing in the text box we need to skip its processing in this.
+	-- Note that EVT_CHAR event does not catch the Enter/Backspace and Arrow Keys
+	local c = event:GetKeyCode()
+	if c == wx.WXK_RETURN then
+		return
+	end
+	event:Skip()
+end
+
 -- env is the environment associated with the terminal where the lua commands will be executed
 -- logFile is the name if the logFile where the terminal output is backed up till the last executed command
 -- redirectIO is a boolean, if true then print function and io.read and io.write (if they exist in the environment) will be redirected to use the text control
@@ -333,6 +353,7 @@ function newTerm(parent,env,redirectIO, logFile)
 	local term = {
 		execCmd = execCmd
 	}
+	PARENT = parent
 	local prnt,iowrite,ioread,iprint,iiowrite,iioread
 	if USESCINTILLA then
 		term.term =  wxstc.wxStyledTextCtrl(parent, wx.wxID_ANY)
@@ -468,6 +489,7 @@ function newTerm(parent,env,redirectIO, logFile)
 			return te:GetCurrentPos()
 		end
 		term.SetCaretPos = function(pos)
+			--print("Set Caret Pos",pos)
 			return te:GotoPos(pos) --te:SetCurrentPos(pos)
 		end
 		term.GetSelectedText = function()
@@ -487,6 +509,7 @@ function newTerm(parent,env,redirectIO, logFile)
 		te:Connect(wxstc.wxEVT_STC_MODIFIED, function(event) return action(term,event) end)
 		-- Bind the key press event to the OnKeyPress function
 		te:Connect(wx.wxEVT_KEY_DOWN, function(event) return k_any(term,event) end)
+		te:Connect(wx.wxEVT_CHAR,function(event) k_cr_reject(term,event) end)
 		--[=[
 		iup.scintilla {
 			appendnewline = "NO",
@@ -517,6 +540,7 @@ function newTerm(parent,env,redirectIO, logFile)
 		offset = 0
 		term.term = wx.wxTextCtrl(parent, wx.wxID_ANY, "", wx.wxDefaultPosition, wx.wxDefaultSize, wx.wxTE_MULTILINE)
 		local te = term.term
+		
 		term.Set = function(text)
 			te:Freeze()
 			local st,stp = te:GetSelection()
@@ -531,11 +555,16 @@ function newTerm(parent,env,redirectIO, logFile)
 			te:AppendText(text)
 			te:SetSelection(-1,-1)
 			te:Thaw()
+			--print("Appended:")
+			--local by = {}
+			--for i = 1,#text do by[#by + 1] = text:sub(i,i):byte() end
+			--print(text,table.unpack(by))
 			--print("Append Post:",te:GetSelectionStart(),te:GetSelectionEnd())
 		end
+		
 		-- Function to convert a position in the GetValue return to a position of the Get/SetInsertionPoint
 		local function posValue2posCaret(pos)
-			if te:GetLastPosition() ~= #te:GetValue() then
+			if te:GetLastPosition()+1 ~= #te:GetValue() then
 				local _,ln = te:GetValue():sub(1,pos):gsub("\n","") 
 				pos = pos + ln -- Add 1 char for each line
 			end			
@@ -554,6 +583,7 @@ function newTerm(parent,env,redirectIO, logFile)
 			return #te:GetValue()
 			--return #te:GetRange(0,te:GetLastPosition())+1
 		end
+		
 		term.Get = function()
 			--return te:GetRange(0,te:GetLastPosition())
 			return te:GetValue()
@@ -562,6 +592,7 @@ function newTerm(parent,env,redirectIO, logFile)
 			local pos = te:GetInsertionPoint()
 			return posCaret2posValue(pos)
 		end
+		
 		term.SetCaretPos = function(pos)
 			pos = posValue2posCaret(pos)
 			return te:SetInsertionPoint(pos)
@@ -580,11 +611,12 @@ function newTerm(parent,env,redirectIO, logFile)
 			local st,stp = te:GetSelection()
 			return posCaret2posValue(stp)
 		end
+		
 		-- Bind the text modified event to the OnTextModified function
 		te:Connect(wx.wxEVT_TEXT, function(event) return action(term,event) end)
 		-- Bind the key press event to the OnKeyPress function
 		te:Connect(wx.wxEVT_KEY_DOWN, function(event) return k_any(term,event) end)
-		
+		te:Connect(wx.wxEVT_CHAR,function(event) k_cr_reject(term,event) end)		
 		--[[
 		iup.text {
 			appendnewline = "NO",
@@ -610,21 +642,17 @@ function newTerm(parent,env,redirectIO, logFile)
 				-- Remove whatever was written until the prompt
 				term.Set(term.Get():sub(1,promptPos))
 			end
-			local endCR
 			local t = table.pack(...) -- used this to get the nil parameters as well
 			for i = 1,t.n do
 				if i > 1 then
 					term.Append("\t")
 				end
 				local ln = tostring(t[i])
+				--print(ln)
+				--print(ln:sub(-1,-1) == "\r", ln:sub(-1,-1)=="\n")
 				term.Append(ln)
-				if i == t.n and ln:sub(-1,-1) == "\n" then
-					endCR = true
-				end
 			end
-			if not endCR then
-				term.Append("\n")
-			end
+			term.Append("\n")
 			if not term.executing then
 				-- Now place the prompt and cmd in the end
 				term.Append(">")
@@ -641,7 +669,6 @@ function newTerm(parent,env,redirectIO, logFile)
 			-- The print function in the terminal is slightly different than the above since the command should not be copied down
 			iprint = function(...)
 				local t = table.pack(...) -- used this to get the nil parameters as well
-				local endCR
 				for i = 1,t.n do
 					if i > 1 then
 						term.Append("\t")
@@ -649,13 +676,10 @@ function newTerm(parent,env,redirectIO, logFile)
 					local ln = tostring(t[i])
 					--print(tostring(t[i]))
 					term.Append(ln)
-					if i == t.n and ln:sub(-1,-1) == "\n" then
-						endCR = true
-					end
+					--print(ln)
+					--print(ln:sub(-1,-1) == "\r", ln:sub(-1,-1)=="\n")
 				end
-				if not endCR then
-					term.Append("\n")
-				end
+				term.Append("\n")
 				term.SetCaretPos(term.GetLength())
 				wx.wxGetApp():Yield()
 			end
@@ -771,6 +795,7 @@ function newTerm(parent,env,redirectIO, logFile)
 	}
 	
 	-- Display the start message
+	
 	term.SetSelection(-1,-1)
 	--print("Before adding",term.GetSelectionStart(),term.GetSelectionEnd())
 	term.Append([[LuaTerminal version ]].._VERSION.."\n")

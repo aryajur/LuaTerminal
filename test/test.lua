@@ -1,5 +1,5 @@
 -- To test LuaTerminal module
-
+--require('mobdebug').coro()
 require("wx")
 lt = require("LuaTerminal")
 lt.USESCINTILLA = false
@@ -48,6 +48,13 @@ PrintButton5 = wx.wxButton(frame, wx.wxID_ANY, "io.read", wx.wxDefaultPosition, 
 hSizer:Add(PrintButton5)
 PrintButton5:Connect(wx.wxEVT_COMMAND_BUTTON_CLICKED,function(event)
 	print(io.read())
+  end)
+PrintButton5 = wx.wxButton(frame, wx.wxID_ANY, "Append Text", wx.wxDefaultPosition, wx.wxDefaultSize, 0, wx.wxDefaultValidator)
+hSizer:Add(PrintButton5)
+PrintButton5:Connect(wx.wxEVT_COMMAND_BUTTON_CLICKED,function(event)
+	newterm.Append("\n")
+	newterm.Append(">")
+	newterm.data.prompt = newterm.GetLength()
   end)
 frame:SetSizer(MainSizer)
 MainSizer:SetSizeHints(frame)
