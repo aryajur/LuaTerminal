@@ -191,7 +191,6 @@ end
 local function SetupKeywords(editor, useLuaParser)
     if useLuaParser then
         editor:SetLexer(wxstc.wxSTC_LEX_LUA)
-
         -- Note: these keywords are shamelessly ripped from scite 1.68
         editor:SetKeyWords(0,
             [[and break do else elseif end false for function if
@@ -337,6 +336,7 @@ function newTerm(parent,env,redirectIO, logFile)
 	local prnt,iowrite,ioread,iprint,iiowrite,iioread
 	if USESCINTILLA then
 		term.term =  wxstc.wxStyledTextCtrl(parent, wx.wxID_ANY)
+		term.term:SetWrapMode(wxstc.wxSTC_WRAP_WORD)
 		local font,fontItalic
 		-- Pick some reasonable fixed width fonts to use for the editor
 		if wx.__WXMSW__ then
@@ -363,7 +363,7 @@ function newTerm(parent,env,redirectIO, logFile)
 			te:StyleSetFont(i, font)
 		end
 
-		te:StyleSetForeground(0,  wx.wxColour(255, 255, 255)) -- White space
+		te:StyleSetForeground(0,  wx.wxColour(0, 0, 0)) -- White space
 		te:StyleSetForeground(1,  wx.wxColour(0,   128, 0))   -- Block Comment
 		te:StyleSetFont(1, fontItalic)
 		--editor:StyleSetUnderline(1, false)
@@ -468,7 +468,7 @@ function newTerm(parent,env,redirectIO, logFile)
 			return te:GetCurrentPos()
 		end
 		term.SetCaretPos = function(pos)
-			return te:SetCurrentPos(pos)
+			return te:GotoPos(pos) --te:SetCurrentPos(pos)
 		end
 		term.GetSelectedText = function()
 			return te:GetSelectedText()
@@ -610,14 +610,21 @@ function newTerm(parent,env,redirectIO, logFile)
 				-- Remove whatever was written until the prompt
 				term.Set(term.Get():sub(1,promptPos))
 			end
+			local endCR
 			local t = table.pack(...) -- used this to get the nil parameters as well
 			for i = 1,t.n do
 				if i > 1 then
 					term.Append("\t")
 				end
-				term.Append(tostring(t[i]))
+				local ln = tostring(t[i])
+				term.Append(ln)
+				if i == t.n and ln:sub(-1,-1) == "\n" then
+					endCR = true
+				end
 			end
-			term.Append("\n")
+			if not endCR then
+				term.Append("\n")
+			end
 			if not term.executing then
 				-- Now place the prompt and cmd in the end
 				term.Append(">")
@@ -626,6 +633,7 @@ function newTerm(parent,env,redirectIO, logFile)
 				term.Append(cmd)
 			end
 			term.SetCaretPos(term.GetLength())
+			wx.wxGetApp():Yield()
 		end
 
 		if env.print then
@@ -633,14 +641,23 @@ function newTerm(parent,env,redirectIO, logFile)
 			-- The print function in the terminal is slightly different than the above since the command should not be copied down
 			iprint = function(...)
 				local t = table.pack(...) -- used this to get the nil parameters as well
+				local endCR
 				for i = 1,t.n do
 					if i > 1 then
 						term.Append("\t")
 					end
-					term.Append(tostring(t[i]))
+					local ln = tostring(t[i])
+					--print(tostring(t[i]))
+					term.Append(ln)
+					if i == t.n and ln:sub(-1,-1) == "\n" then
+						endCR = true
+					end
 				end
-				term.Append("\n")
+				if not endCR then
+					term.Append("\n")
+				end
 				term.SetCaretPos(term.GetLength())
+				wx.wxGetApp():Yield()
 			end
 		end
 		-- modify io.write and io.read
@@ -665,6 +682,7 @@ function newTerm(parent,env,redirectIO, logFile)
 				term.Append(cmd)
 			end
 			term.SetCaretPos(term.GetLength())
+			wx.wxGetApp():Yield()
 		end
 		-- Modify the io.read
 		ioread = function()
@@ -686,6 +704,7 @@ function newTerm(parent,env,redirectIO, logFile)
 			local value = env["_VARX"..var]
 			env["_VARX"..var] = nil
 			term.data.co = co
+			wx.wxGetApp():Yield()
 			return value
 		end
 		if env.io and type(env.io) == "table" then
@@ -698,6 +717,7 @@ function newTerm(parent,env,redirectIO, logFile)
 					term.Append(tostring(t[i]))
 				end
 				term.SetCaretPos(term.GetLength())
+				wx.wxGetApp():Yield()
 			end
 			-- modify io.read
 			iioread = function()
@@ -753,7 +773,7 @@ function newTerm(parent,env,redirectIO, logFile)
 	-- Display the start message
 	term.SetSelection(-1,-1)
 	--print("Before adding",term.GetSelectionStart(),term.GetSelectionEnd())
-	term.Append("LuaTerminal version ".._VERSION.."\n")
+	term.Append([[LuaTerminal version ]].._VERSION.."\n")
 	-- Display the prompt
 	term.Append(">")
 	term.data.prompt = term.GetLength()-offset
