@@ -271,7 +271,7 @@ local function k_any(term,event)
 		-- Execute the current text
 		local promptPos = term.data.prompt
 		local cmd = term.Get():sub(promptPos+1,-1)
-		print("new text is: ",cmd,#cmd)
+		--print("new text is: ",cmd,#cmd)
 		term.executing = true	-- Mark execution has started
 		term:execCmd(cmd,true)
 		term.executing = nil
