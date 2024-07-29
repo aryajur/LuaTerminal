@@ -33,7 +33,7 @@ _ENV = M		-- Lua 5.2+
 
 -- Create the module table ends
 
-_VERSION = "2.23.10.12"
+_VERSION = "2.24.07.29"
 MAXTEXT = 8192		-- maximum characters in text box
 USESCINTILLA = false
 
@@ -91,7 +91,8 @@ local function trimText(term)
 		else
 			term.Set(term.Get():sub(-term.data.maxText,-1):match(".-\n(.+)$"))
 		end
-		term.SetCaretPos(term.GetLength())
+		--term.SetCaretPos(term.GetLength())
+		term.GotoEnd()
 	end
 end
 
@@ -127,7 +128,8 @@ local function execCmd(term,cmd,log,nohist)
 		if incomplete(cmd) then
 			--print("Incomplete command")
 			term.Append("\n\t")
-			term.SetCaretPos(term.GetLength())
+			--term.SetCaretPos(term.GetLength())
+			term.GotoEnd()
 			trimText(term)
 			return
 		else
@@ -146,7 +148,8 @@ local function execCmd(term,cmd,log,nohist)
 				trimText(term)
 				-- Update the prompt position
 				term.data.prompt = term.GetLength()-offset
-				term.SetCaretPos(term.GetLength())
+				--term.SetCaretPos(term.GetLength())
+				term.GotoEnd()
 				return
 			else
 				-- Add cmd to command history
@@ -163,7 +166,8 @@ local function execCmd(term,cmd,log,nohist)
 	else
 		--print("Use cmd as user input and resume coroutine",cmd)
 		term.Append("\n")
-		term.SetCaretPos(term.GetLength())
+		--term.SetCaretPos(term.GetLength())
+		term.GotoEnd()
 		stat,err = coroutine.resume(term.data.co,cmd)
 	end
 	--print(stat,err)
@@ -192,7 +196,8 @@ local function execCmd(term,cmd,log,nohist)
 	--print(term.Get():sub(1,term.data.prompt))
 	--print("prompt: ",term.data.prompt[1],term.data.prompt[2])
 	
-	term.SetCaretPos(term.GetLength())
+	--term.SetCaretPos(term.GetLength())
+	term.GotoEnd()
 	
 	--print("Ending execmd",term.data.co)
 end
@@ -286,7 +291,8 @@ local function k_any(term,event)
 				local promptPos = term.data.prompt
 				local cmd = term.data.history[term.data.history[0]]
 				term.Set(term.Get():sub(1,promptPos)..cmd)
-				term.SetCaretPos(term.GetLength())
+				--term.SetCaretPos(term.GetLength())
+				term.GotoEnd()
 			end
 		elseif c==wx.WXK_LEFT then	-- left arrow pressed
 			-- Go to the first command in the history if cntrl is pressed
@@ -295,7 +301,8 @@ local function k_any(term,event)
 				local promptPos = term.data.prompt
 				local cmd = term.data.history[term.data.history[0]]
 				term.Set(term.Get():sub(1,promptPos)..cmd)
-				term.SetCaretPos(term.GetLength())
+				--term.SetCaretPos(term.GetLength())
+				term.GotoEnd()
 			end
 		elseif c==wx.WXK_RIGHT then	-- right arrow pressed
 			-- Go to the last command in the history if cntrl is pressed
@@ -304,7 +311,8 @@ local function k_any(term,event)
 				local promptPos = term.data.prompt
 				local cmd = term.data.history[term.data.history[0]]
 				term.Set(term.Get():sub(1,promptPos)..cmd)
-				term.SetCaretPos(term.GetLength())
+				--term.SetCaretPos(term.GetLength())
+				term.GotoEnd()
 			end
 		elseif c==wx.WXK_DOWN then	-- down arrow pressed
 			-- Go to the next command in the history if cntrl is pressed
@@ -318,7 +326,8 @@ local function k_any(term,event)
 					cmd = term.data.history[term.data.history[0]]
 				end
 				term.Set(term.Get():sub(1,promptPos)..cmd)
-				term.SetCaretPos(term.GetLength())
+				--term.SetCaretPos(term.GetLength())
+				term.GotoEnd()
 			end
 		else
 			-- Default handling for other keys
@@ -480,7 +489,7 @@ function newTerm(parent,env,redirectIO, logFile)
 			--print("Append Post:",te:GetSelectionStart(),te:GetSelectionEnd())
 		end
 		term.GetLength = function()
-			return te:GetTextLength()
+			return #te:GetText() --te:GetTextLength()
 		end
 		term.Get = function()
 			return te:GetText()
@@ -488,9 +497,17 @@ function newTerm(parent,env,redirectIO, logFile)
 		term.GetCaretPos = function()
 			return te:GetCurrentPos()
 		end
+		--[[
 		term.SetCaretPos = function(pos)
 			--print("Set Caret Pos",pos)
-			return te:GotoPos(pos) --te:SetCurrentPos(pos)
+			te:GotoPos(pos)
+			te:EnsureCaretVisible()
+			return true --te:SetCurrentPos(pos)
+		end
+		]]
+		term.GotoEnd = function()
+			te:DocumentEnd()
+			return true
 		end
 		term.GetSelectedText = function()
 			return te:GetSelectedText()
@@ -592,10 +609,16 @@ function newTerm(parent,env,redirectIO, logFile)
 			local pos = te:GetInsertionPoint()
 			return posCaret2posValue(pos)
 		end
-		
+		--[[
 		term.SetCaretPos = function(pos)
 			pos = posValue2posCaret(pos)
 			return te:SetInsertionPoint(pos)
+		end
+		]]
+		term.GotoEnd = function()
+			pos = posValue2posCaret(#te:GetValue())
+			te:SetInsertionPoint(pos)
+			return true
 		end
 		term.GetSelectedText = function()
 			return te:GetSelectedText()
@@ -660,7 +683,8 @@ function newTerm(parent,env,redirectIO, logFile)
 				term.data.prompt = term.GetLength()-offset
 				term.Append(cmd)
 			end
-			term.SetCaretPos(term.GetLength())
+			--term.SetCaretPos(term.GetLength())
+			term.GotoEnd()
 			wx.wxGetApp():Yield()
 		end
 
@@ -680,7 +704,8 @@ function newTerm(parent,env,redirectIO, logFile)
 					--print(ln:sub(-1,-1) == "\r", ln:sub(-1,-1)=="\n")
 				end
 				term.Append("\n")
-				term.SetCaretPos(term.GetLength())
+				--term.SetCaretPos(term.GetLength())
+				term.GotoEnd()
 				wx.wxGetApp():Yield()
 			end
 		end
@@ -705,7 +730,8 @@ function newTerm(parent,env,redirectIO, logFile)
 				term.data.prompt = term.GetLength()-offset
 				term.Append(cmd)
 			end
-			term.SetCaretPos(term.GetLength())
+			--term.SetCaretPos(term.GetLength())
+			term.GotoEnd()
 			wx.wxGetApp():Yield()
 		end
 		-- Modify the io.read
@@ -740,7 +766,8 @@ function newTerm(parent,env,redirectIO, logFile)
 				for i = 1,t.n do
 					term.Append(tostring(t[i]))
 				end
-				term.SetCaretPos(term.GetLength())
+				--term.SetCaretPos(term.GetLength())
+				term.GotoEnd()
 				wx.wxGetApp():Yield()
 			end
 			-- modify io.read
@@ -802,7 +829,8 @@ function newTerm(parent,env,redirectIO, logFile)
 	-- Display the prompt
 	term.Append(">")
 	term.data.prompt = term.GetLength()-offset
-	term.SetCaretPos(term.GetLength())
+	--term.SetCaretPos(term.GetLength())
+	term.GotoEnd()
 	
 	numOfTerms = numOfTerms + 1
 	--print("Prompt at creation: ",term.data.prompt)
